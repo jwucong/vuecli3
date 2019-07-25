@@ -21,7 +21,7 @@ const config = {
     if (!data) {
       return {}
     }
-    if (headers.post['Content-Type'] !== urlencoded) {
+    if (headers['Content-Type'] !== urlencoded) {
       return data;
     }
     const params = new URLSearchParams()
