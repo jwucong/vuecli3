@@ -18,7 +18,7 @@
       return {}
     },
     mounted() {
-      this.post()
+      // this.post()
     },
     methods: {
      dateFormatter(value, formatter) {
@@ -41,6 +41,7 @@
 
 <!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
+  /* eslint-disable */
   h3 {
     margin: 40px 0 0;
   }
