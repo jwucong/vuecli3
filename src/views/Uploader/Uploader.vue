@@ -18,10 +18,7 @@
       <div class="uploader-list-item">
         <label class="uploader-btn">
           <i class="uploader-btn-icon"></i>
-          <input
-            type="file"
-            v-bind="$attrs"
-            @change="onChange">
+          <input type="file" v-bind="$attrs" @change="onChange">
         </label>
       </div>
     </div>
@@ -51,14 +48,17 @@
   import pic7 from '@/assets/IMG_1008.GIF'
   import pic8 from '@/assets/IMG_1013.GIF'
   import pic9 from '@/assets/IMG_1017.GIF'
-  import {sizeToBytes} from "./utils"
+  import {
+    exec,
+    readFile,
+    newFile,
+    base64ToBlob,
+    sizeToBytes,
+  } from "./utils"
 
   export default {
     name: 'Uploader',
-    model: {
-      prop: 'files',
-      event: 'change'
-    },
+    inheritAttrs: false,
     props: {
       title: String,
       action: String,
@@ -71,18 +71,15 @@
       thumbnailFit: [Number, String],  // contain, cover, fill, none, ratioDelta
       beforeUpload: Function,      // return false to cancel upload
       uploadMethod: Function,      // use your own upload handler
-      files: {
+      value: {
         type: Array,
         default: () => ([])
-      },
-      resultType: {
-        type: String,
-        default: 'Blob' // blob/base64
-      },
+      }
     },
     data() {
       return {
-        previewList: []
+        previewList: [],
+        thumbnailList: [],
       }
     },
     computed: {
@@ -106,40 +103,119 @@
       hasKey(object, key) {
         return Object.prototype.hasOwnProperty.call(object, key)
       },
-      onChange(event) {
-        const files = Array.prototype.slice.call(event.target.files)
-        const byteBase = parseInt(this.byteBase, 10) || 1024
-        const maxCount = parseInt(this.maxCount, 10)
-        const maxSize = sizeToBytes(this.maxSize, byteBase)
-        const length = files.length
-        console.log('files: ', files)
-        console.log('maxCount: ', maxCount)
-        console.log('maxSize: ', maxSize)
-        console.log('length: ', length)
-        if(maxCount && length > maxCount) {
-          this.updateFileList(files.slice(0, maxCount))
-          return this.emitOverEvent('count', length, maxCount)
+      toArray(arrayLike) {
+        return Array.prototype.slice.call(arrayLike)
+      },
+      createFileList(files, callback) {
+        const size = files.length
+        if (!size) {
+          return
         }
-        if(maxSize) {
-          for (let i = 0; i < files.length; i++) {
-            const fileSize = files[i].size
-            if(fileSize > maxSize) {
-              this.updateFileList(files.slice(0, i))
-              return this.emitOverEvent('size', fileSize, maxSize)
-            }
+        const result = []
+        const next = () => {
+          result.length === size && exec(callback, result.filter(Boolean))
+        }
+        for (let i = 0; i < size; i++) {
+          const file = files[i]
+          readFile(file).then(base64 => {
+            result[i] = newFile(file, base64)
+            next()
+          }).catch((error) => {
+            result[i] = null
+            next()
+          })
+        }
+      },
+      getOversizeInfo(files) {
+        const base = parseInt(this.byteBase, 10) || 1024
+        const result = {
+          index: -1,
+          value: null,
+          file: null,
+          limit: sizeToBytes(this.maxSize, base) || null
+        }
+        if(result.limit) {
+          result.index = files.findIndex(file => file.size > result.limit)
+          result.file = files[result.index] || null
+          result.value = result.file ? result.file.size : null
+        }
+        return result
+      },
+      onChange(event) {
+        console.group('onChange')
+        const files = this.toArray(event.target.files)
+        const maxCount = parseInt(this.maxCount, 10) || null
+        const oversizeInfo = this.getOversizeInfo(files)
+        console.log('files: ', files)
+        if (oversizeInfo.index !== -1) {
+          if (!maxCount || oversizeInfo.index < maxCount) {
+            return this.onOversize(files, oversizeInfo)
           }
         }
-        this.updateFileList(files)
+        if (maxCount && files.length > maxCount) {
+          return this.onOverCount(files, maxCount)
+        }
+        this.onAddFile(files)
+        console.groupEnd()
       },
-      emitOverEvent(type, value, limit) {
-        this.$emit('over', {type, value, limit})
+      onOversize(files, oversizeInfo) {
+        console.group('onOversize')
+        const type = 'size'
+        const {index, value, limit, file} = oversizeInfo
+        const fileList = files.slice(0, index)
+        console.log('oversizeInfo: ', oversizeInfo)
+        this.$emit('limit', {type, value, limit})
+        console.log('payload: ', {type, value, limit, file})
+        this.onAddFile(fileList)
+        console.groupEnd()
+      },
+      onOverCount(files, limit) {
+        console.group('onOverCount')
+        const type = 'count'
+        const value = files.length
+        const fileList = files.slice(0, limit)
+        this.$emit('limit', {type, value, limit})
+        console.log('payload: ', {type, value, limit})
+        this.onAddFile(fileList)
+        console.groupEnd()
+      },
+      onAddFile(files) {
+        this.createFileList(files, fileList => {
+          this.updateFileList(fileList)
+          this.$emit('add', fileList.slice())
+        })
+      },
+      onRemoveFile(index) {
+        const list = this.value.slice()
+        const items = list.splice(index, 1)
+        this.updateFileList(list)
+        this.$emit('remove', {index, file: items[0]})
       },
       updateFileList(fileList) {
-        console.log('updateFileList: ', fileList)
-        this.$emit('change', fileList)
+        const oldFiles = this.value
+        const empty = !oldFiles.length
+        const files = empty ? fileList : oldFiles.concat(fileList)
+        this.$emit('input', files)
+        this.updateThumbnailList(files, empty)
       },
-      readFile(file) {
-
+      updateThumbnailList(files) {
+        const thumbnail = data => Object.assign(Object.create(null), data)
+        const load = (index, src) => {
+          const image = new Image()
+          image.onload = () => {
+            const loaded = true
+            const width = image.naturalWidth
+            const height = image.naturalHeight
+            const ratio = width / height
+            const newThumbnail = thumbnail({src,loaded, width, height, ratio})
+            this.$set(this.thumbnailList, index, newThumbnail)
+          }
+          image.setAttribute('src', src)
+        }
+        this.thumbnailList = files.map((file, index) => {
+          const src = file.base64()
+          // TODO updateThumbnailList
+        })
       },
       getPreviewList(fileList) {
         for (let i = 0; i < fileList.length; i++) {
@@ -161,14 +237,18 @@
         const delta = ratio - 1
         const modes = ['none', 'fill', 'contain', 'cover']
         const isRatioMode = modes.indexOf(mode) < 0
-        if(isRatioMode) {
+        if (isRatioMode) {
           mode = parseFloat(mode) || defaultRatio
           mode = Math.abs(delta) > Math.abs(mode) ? 'contain' : 'fill'
         }
         let tag = ''
         switch (mode) {
-          case 'none': tag = 'none'; break;
-          case 'fill': tag = 'fill'; break;
+          case 'none':
+            tag = 'none';
+            break;
+          case 'fill':
+            tag = 'fill';
+            break;
           case 'cover':
             tag = delta < 0 ? 'cover-w' : 'cover-h';
             break;
@@ -205,11 +285,14 @@
       .uploader-title {
         color: #999;
       }
+
       .uploader-label:after {
         border-color: #e2e2e2;
       }
+
       .uploader-btn-icon {
         transform: translate(-50%, -50%) rotate(45deg);
+
         &:before,
         &:after {
           border-color: #e2e2e2;
@@ -244,9 +327,11 @@
       padding-bottom: @cellWidth;
       margin-right: @gutter;
       margin-bottom: @gutter;
+
       &:nth-child(@{column}n+@{column}) {
         margin-right: 0;
       }
+
       &:nth-last-child(-n+@{column}) {
         margin-bottom: 0;
       }
@@ -264,6 +349,7 @@
       transform-origin: top left;
       transform: scale(0.5, 0.5);
       overflow: hidden;
+
       img {
         display: block;
         border: 0;
@@ -311,9 +397,6 @@
     }
 
 
-
-
-
     .uploader-btn {
       position: absolute;
       top: 0;
@@ -340,6 +423,7 @@
       transform: translate(-50%, -50%);
       pointer-events: none;
       transition: transform 0.3s;
+
       &:before,
       &:after {
         content: '';
@@ -351,6 +435,7 @@
         transform-origin: 0 0;
         /*transform: scale(0.5, 0.5);*/
       }
+
       &:before {
         top: 50%;
         left: 0;
@@ -358,6 +443,7 @@
         height: 0;
         border-bottom-width: 1px;
       }
+
       &:after {
         top: 0;
         left: 50%;

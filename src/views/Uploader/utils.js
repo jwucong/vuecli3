@@ -91,3 +91,73 @@ export const fileToBlob = (file, success, error) => {
   }
   reader.readAsArrayBuffer(file)
 }
+
+export const getExtension = file => {
+  if(!file) {
+    return ''
+  }
+  const type = typeof file
+  const byName = name => {
+    const p = /.+\.([^\.]+)$/i.exec(name)
+    return p ? p[1] : ''
+  }
+  const byType = type => {
+    const p = /.+\/([^\/]+)$/i.exec(type)
+    return p ? p[1] : ''
+  }
+  if(type === 'string') {
+    return parseBase64(file).type || byName(file) || byType(file)
+  }
+  if(type === 'object' && (file.name || file.type)) {
+    return byName(file.name) || byType(file.type)
+  }
+  return ''
+}
+
+export const newFile = (file, base64, res) => {
+  const desc = value => ({
+    configurable: false,
+    writable: false,
+    enumerable: true,
+    value: value || null
+  })
+  const freeze = obj => Object.freeze(obj)
+  const plain = obj => Object.assign(Object.create(null), obj)
+  const props = {
+    isUploaderFile: desc(true),
+    name: desc(file.name),
+    type: desc(file.type),
+    size: desc(file.size),
+    raw: desc(file),
+    extension: desc(getExtension(file)),
+    lastModified: desc(file.lastModified || Date.now()),
+    lastModifiedDate: desc(file.lastModifiedDate || new Date()),
+    blob: desc(() => base64 ? base64ToBlob(base64) : null),
+    base64: desc(() => base64 || ''),
+    uploadResponse: desc(res ? freeze(plain(res)) : null)
+  }
+  return freeze(Object.defineProperties(plain(), props))
+}
+
+export const readFile = (file, resultType, encoding) => {
+  return new Promise((resolve, reject) => {
+    if(resultType === 'file') {
+      return resolve(file)
+    }
+    const reader = new FileReader()
+    reader.onload = function () {
+      resolve(this.result)
+    }
+    reader.onerror = function (event) {
+      reader.abort()
+      reject(event)
+    }
+    if (resultType === 'text') {
+      reader.readAsText(file, encoding || 'utf-8')
+    } else if(resultType === 'buffer') {
+      reader.readAsArrayBuffer(file)
+    } else {
+      reader.readAsDataURL(file)
+    }
+  })
+}
