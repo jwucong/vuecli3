@@ -2,13 +2,32 @@ export const getType = value => {
   return Object.prototype.toString.call(value).slice(8, -1)
 }
 
+export const hasKey = (object, key) => {
+  return Object.prototype.hasOwnProperty.call(object, key)
+}
+
+export const plainObject = (...args) => {
+  return Object.assign.apply(null, [Object.create(null)].concat(args))
+}
+
 export const exec = function(fn) {
   if(typeof fn === 'function') {
     return fn.apply(this, Array.prototype.slice.call(arguments, 1))
   }
 }
 
-export const sizeToBytes = (size, base = 1024) => {
+export const bytesToSize = (bytes, base = 1000) => {
+  if (bytes < 0) {
+    return NaN
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB', 'BB', 'NB', 'DB']
+  const index = Math.floor(Math.log(bytes) / Math.log(base))
+  const size = bytes / Math.pow(base, index)
+  const val = index > 1 ? size.toFixed(2) : Math.ceil(size)
+  return index < units.length ? val + units[index] : NaN
+}
+
+export const sizeToBytes = (size, base = 1000) => {
   const pattern = /^\s*\+?((?:\.\d+)|(?:\d+(?:\.\d+)?))\s*([a-z]*)\s*$/i;
   const p = pattern.exec(size)
   if (!p) {
@@ -115,16 +134,14 @@ export const getExtension = file => {
 }
 
 export const newFile = (file, base64, res) => {
-  const desc = value => ({
+  const desc = value => plainObject({
     configurable: false,
     writable: false,
     enumerable: true,
     value: value || null
   })
-  const freeze = obj => Object.freeze(obj)
-  const plain = obj => Object.assign(Object.create(null), obj)
+  const readOnly = obj => Object.freeze(obj)
   const props = {
-    isUploaderFile: desc(true),
     name: desc(file.name),
     type: desc(file.type),
     size: desc(file.size),
@@ -134,9 +151,9 @@ export const newFile = (file, base64, res) => {
     lastModifiedDate: desc(file.lastModifiedDate || new Date()),
     blob: desc(() => base64 ? base64ToBlob(base64) : null),
     base64: desc(() => base64 || ''),
-    uploadResponse: desc(res ? freeze(plain(res)) : null)
+    uploadResponse: desc(readOnly(plainObject(res)))
   }
-  return freeze(Object.defineProperties(plain(), props))
+  return readOnly(Object.defineProperties(plainObject(), props))
 }
 
 export const readFile = (file, resultType, encoding) => {

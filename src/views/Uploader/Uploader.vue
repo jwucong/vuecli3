@@ -1,6 +1,5 @@
-/* eslint-disable */
 <template>
-  <div class="uploader" :class="{'uploader-disabled': disabled}">
+  <div class="uploader" :class="{'uploader-disabled': inputAttrs.disabled}">
     <div class="uploader-header">
       <slot name="header">
         <div v-if="title" class="uploader-title">{{title}}</div>
@@ -9,18 +8,24 @@
     <div class="uploader-list">
       <div
         class="uploader-list-item"
-        v-for="image in previewList"
-        :key="image.src">
+        v-for="(image, index) in thumbnailList"
+        :key="index">
         <div class="uploader-pic-box">
-          <img :class="getPicClass(image)" :src="image.src" alt="">
+          <transition name="fade">
+            <img v-show="image.src" :class="getPicClass(image)" :src="image.src" alt="">
+          </transition>
+          <span class="uploader-rm-btn" @click="removeFile(index)"></span>
         </div>
       </div>
       <div class="uploader-list-item">
         <label class="uploader-btn">
           <i class="uploader-btn-icon"></i>
-          <input type="file" v-bind="$attrs" @change="onChange">
+          <input v-bind="inputAttrs" @change="changeHandler">
         </label>
       </div>
+    </div>
+    <div ref="op" class="box" v-html="op" style="margin-top: 10px;">
+
     </div>
   </div>
 </template>
@@ -38,7 +43,6 @@
    * 5. error payload{error, file, files}
    */
 
-  import logo from '@/assets/logo.png'
   import pic1 from '@/assets/IMG_0507.JPG'
   import pic2 from '@/assets/IMG_0508.JPG'
   import pic3 from '@/assets/IMG_0532.JPG'
@@ -50,18 +54,20 @@
   import pic9 from '@/assets/IMG_1017.GIF'
   import {
     exec,
+    hasKey,
+    plainObject,
     readFile,
     newFile,
-    base64ToBlob,
     sizeToBytes,
+    bytesToSize,
   } from "./utils"
+  import {compressor, loadImage, getOrientation} from "./imageTool";
 
   export default {
     name: 'Uploader',
     inheritAttrs: false,
     props: {
       title: String,
-      action: String,
       headers: String,
       removable: Boolean,
       autoUpload: Boolean,
@@ -78,167 +84,161 @@
     },
     data() {
       return {
-        previewList: [],
+        op: null,
         thumbnailList: [],
       }
     },
     computed: {
-      disabled() {
-        return this.hasKey(this.$attrs, 'disabled')
+      inputAttrs() {
+        const attrs = this.$attrs
+        const disabled = hasKey(attrs, 'disabled') || this.vacantCount === 0
+        return plainObject(attrs, {
+          type: 'file',
+          disabled,
+        })
       },
-      previews() {
-
-      },
-      logo() {
-        return logo
-      },
-      pics() {
-        return [pic1, pic2, pic3, pic4, pic5, pic6, pic7, pic8, pic9]
+      vacantCount() {
+        const max = parseInt(this.maxCount, 10)
+        if (!max) {
+          return null
+        }
+        return max - this.value.length
       }
     },
     mounted() {
-      this.getPreviewList(this.pics)
+
     },
     methods: {
-      hasKey(object, key) {
-        return Object.prototype.hasOwnProperty.call(object, key)
-      },
       toArray(arrayLike) {
         return Array.prototype.slice.call(arrayLike)
       },
       createFileList(files, callback) {
+        let count = 0, fileList = []
         const size = files.length
-        if (!size) {
-          return
-        }
-        const result = []
-        const next = () => {
-          result.length === size && exec(callback, result.filter(Boolean))
-        }
-        for (let i = 0; i < size; i++) {
-          const file = files[i]
-          readFile(file).then(base64 => {
-            result[i] = newFile(file, base64)
-            next()
-          }).catch((error) => {
-            result[i] = null
-            next()
-          })
-        }
-      },
-      getOversizeInfo(files) {
-        const base = parseInt(this.byteBase, 10) || 1024
-        const result = {
-          index: -1,
-          value: null,
-          file: null,
-          limit: sizeToBytes(this.maxSize, base) || null
-        }
-        if(result.limit) {
-          result.index = files.findIndex(file => file.size > result.limit)
-          result.file = files[result.index] || null
-          result.value = result.file ? result.file.size : null
-        }
-        return result
-      },
-      onChange(event) {
-        console.group('onChange')
-        const files = this.toArray(event.target.files)
-        const maxCount = parseInt(this.maxCount, 10) || null
-        const oversizeInfo = this.getOversizeInfo(files)
-        console.log('files: ', files)
-        if (oversizeInfo.index !== -1) {
-          if (!maxCount || oversizeInfo.index < maxCount) {
-            return this.onOversize(files, oversizeInfo)
+        const setFileList = (index, file, base64) => {
+          fileList[index] = file ? newFile(file, base64) : null
+          if (size === ++count) {
+            exec(callback, fileList.filter(Boolean))
           }
         }
-        if (maxCount && files.length > maxCount) {
-          return this.onOverCount(files, maxCount)
+        for (let i = 0; i < size; i++) {
+          readFile(files[i]).then(base64 => {
+            setFileList(i, files[i], base64)
+          }).catch(() => setFileList(i))
         }
-        this.onAddFile(files)
-        console.groupEnd()
       },
-      onOversize(files, oversizeInfo) {
-        console.group('onOversize')
+      oversizeInfo(files) {
+        const base = parseInt(this.byteBase, 10) || 1024
+        const limit = sizeToBytes(this.maxSize, base) || null
+        const result = index => {
+          const file = index < 0 ? null : files[index]
+          const value = file ? file.size : null
+          return plainObject({index, file, value, limit})
+        }
+        return result(limit ? files.findIndex(file => file.size > limit) : -1)
+      },
+      changeHandler(event) {
+        const vacant = this.vacantCount
+        const limited = vacant !== null
+        if (limited && vacant <= 0) {
+          return false
+        }
+        const files = this.toArray(event.target.files)
+        const oversize = this.oversizeInfo(files)
+        if (oversize.index !== -1) {
+          if (!limited || oversize.index < vacant) {
+            return this.oversizeHandler(files, oversize)
+          }
+        }
+        if (limited && vacant < files.length) {
+          return this.overCountHandler(files, vacant)
+        }
+        this.addFiles(files)
+      },
+      oversizeHandler(files, oversizeInfo) {
         const type = 'size'
         const {index, value, limit, file} = oversizeInfo
-        const fileList = files.slice(0, index)
-        console.log('oversizeInfo: ', oversizeInfo)
-        this.$emit('limit', {type, value, limit})
-        console.log('payload: ', {type, value, limit, file})
-        this.onAddFile(fileList)
-        console.groupEnd()
+        this.$emit('limit', plainObject({type, value, limit, file}))
+        this.addFiles(files.slice(0, index))
       },
-      onOverCount(files, limit) {
-        console.group('onOverCount')
+      overCountHandler(files, limit) {
         const type = 'count'
         const value = files.length
-        const fileList = files.slice(0, limit)
-        this.$emit('limit', {type, value, limit})
-        console.log('payload: ', {type, value, limit})
-        this.onAddFile(fileList)
-        console.groupEnd()
+        this.$emit('limit', plainObject({type, value, limit}))
+        this.addFiles(files.slice(0, limit))
       },
-      onAddFile(files) {
+      addFiles(files) {
         this.createFileList(files, fileList => {
-          this.updateFileList(fileList)
+          const list = this.value.concat(fileList)
+          this.updateFileList(list)
           this.$emit('add', fileList.slice())
         })
       },
-      onRemoveFile(index) {
+      removeFile(index) {
         const list = this.value.slice()
         const items = list.splice(index, 1)
         this.updateFileList(list)
-        this.$emit('remove', {index, file: items[0]})
+        this.$emit('remove', plainObject({index, file: items[0]}))
       },
       updateFileList(fileList) {
-        const oldFiles = this.value
-        const empty = !oldFiles.length
-        const files = empty ? fileList : oldFiles.concat(fileList)
-        this.$emit('input', files)
-        this.updateThumbnailList(files, empty)
+        this.$emit('input', fileList)
+        this.updateThumbnailList(fileList)
+        if(fileList[0]) {
+          const file = fileList[0]
+          console.log('file.size: ', bytesToSize(fileList[0].size))
+          console.log('file.o: ', getOrientation(file.base64()))
+          compressor(fileList[0].raw, {
+            width: 'auto',
+            size: '500k',
+            error: '30k',
+            minQuality: '70',
+          }).then(blob => {
+            console.log('compressor output: ', blob)
+            console.log('compressor output size: ', bytesToSize(blob.size))
+            readFile(blob).then(base64 => {
+              loadImage(base64).then(image => {
+                console.log('compressor output image.o: ', getOrientation(base64))
+                console.log('compressor output image.w: ', image.naturalWidth)
+                console.log('compressor output image.h: ', image.naturalHeight)
+                console.log('compressor output image.r: ', image.naturalWidth / image.naturalHeight)
+                image.style.width = '100%'
+                this.op = image.outerHTML
+              })
+            })
+          }).catch(e => {
+            console.log('compressor output e: ', e)
+          })
+        }
+      },
+      loadImage(file, callback) {
+        const src = file.base64()
+        const {name, size} = file
+        const image = new Image()
+        const next = data => exec(callback, data)
+        image.onload = () => {
+          const width = image.naturalWidth
+          const height = image.naturalHeight
+          next(plainObject({name, size, src, width, height}))
+        }
+        image.onerror = () => {
+          next(plainObject())
+        }
+        image.setAttribute('src', src)
       },
       updateThumbnailList(files) {
-        const thumbnail = data => Object.assign(Object.create(null), data)
-        const load = (index, src) => {
-          const image = new Image()
-          image.onload = () => {
-            const loaded = true
-            const width = image.naturalWidth
-            const height = image.naturalHeight
-            const ratio = width / height
-            const newThumbnail = thumbnail({src,loaded, width, height, ratio})
-            this.$set(this.thumbnailList, index, newThumbnail)
-          }
-          image.setAttribute('src', src)
-        }
-        this.thumbnailList = files.map((file, index) => {
-          const src = file.base64()
-          // TODO updateThumbnailList
-        })
-      },
-      getPreviewList(fileList) {
-        for (let i = 0; i < fileList.length; i++) {
-          const file = fileList[i]
-          const image = new Image()
-          image.onload = () => {
-            const src = file
-            const width = image.naturalWidth
-            const height = image.naturalHeight
-            const ratio = width / height
-            this.$set(this.previewList, i, {src, width, height, ratio})
-          }
-          image.src = file
+        this.thumbnailList = files.map(() => Object.create(null))
+        for (let i = 0; i < files.length; i++) {
+          const next = data => this.$set(this.thumbnailList, i, data)
+          this.loadImage(files[i], next)
         }
       },
-      getPicClass({ratio}) {
+      getPicClass({width, height}) {
         let mode = '' + this.thumbnailFit
-        const defaultRatio = 0.1
-        const delta = ratio - 1
-        const modes = ['none', 'fill', 'contain', 'cover']
-        const isRatioMode = modes.indexOf(mode) < 0
-        if (isRatioMode) {
-          mode = parseFloat(mode) || defaultRatio
+        const input = /^[-+]?((?:\.\d+)|(?:\d+(?:\.\d+)?))$/.exec(mode)
+        const defaultRatio = 0.15
+        const delta = width / height - 1
+        if (input) {
+          mode = parseFloat(input[1]) || defaultRatio
           mode = Math.abs(delta) > Math.abs(mode) ? 'contain' : 'fill'
         }
         let tag = ''
@@ -249,11 +249,15 @@
           case 'fill':
             tag = 'fill';
             break;
+          case 'contain':
+            tag = delta < 0 ? 'contain-h' : 'contain-w';
+            break;
           case 'cover':
             tag = delta < 0 ? 'cover-w' : 'cover-h';
             break;
+          // case 'cover-center':
           default:
-            tag = delta < 0 ? 'contain-h' : 'contain-w';
+            tag = delta < 0 ? 'cover-wc' : 'cover-hc';
         }
         const className = `uploader-pic-${tag}`
         return {
@@ -270,6 +274,21 @@
   @gutter: 8px;
   @delta: (@column - 1) * @gutter;
   @cellWidth: calc(~"(100% - @{delta}) / @{column}");
+
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 1s;
+  }
+
+  .fade-enter,
+  .fade-leave-to {
+    opacity: 0;
+  }
+
+  .fade-enter-to,
+  .fade-leave {
+    opacity: 1;
+  }
 
   .uploader {
     position: relative;
@@ -316,6 +335,7 @@
       justify-content: flex-start;
       align-items: flex-start;
       flex-wrap: wrap;
+      transition: all .35s;
     }
 
     .uploader-list-item {
@@ -394,6 +414,37 @@
       display: block;
       width: auto;
       height: 100%;
+    }
+
+    .uploader-pic-cover-wc {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: auto;
+      transform: translateY(-50%);
+    }
+
+    .uploader-pic-cover-hc {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: auto;
+      height: 100%;
+      transform: translateX(-50%);
+    }
+
+    .uploader-rm-btn {
+      position: absolute;
+      top: 0;
+      right: 0;
+      box-sizing: border-box;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+      background-color: darkred;
     }
 
 

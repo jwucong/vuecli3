@@ -7,7 +7,7 @@
         multiple
         v-model="files"
         max-count="5"
-        max-size="100kb"
+        thumbnail-fit="cover-center"
         @limit="onLimit"
         @add="onAdd"
         @remove="onRemove"
@@ -46,7 +46,7 @@ export default {
       console.log('onRemove: ', payload)
     },
     onInput(payload) {
-      console.log('onInput: ', payload)
+      // console.log('onInput: ', payload)
     },
     onLimit(payload) {
       console.log('onLimit: ', payload)
