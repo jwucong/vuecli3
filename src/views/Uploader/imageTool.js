@@ -6,11 +6,13 @@ import {
   sizeToBytes,
   readFile,
   blobToBase64,
-  base64ToArrayBuffer, bytesToSize
+  base64ToBlob,
+  base64ToArrayBuffer,
+  bytesToSize, parseBase64
 } from "./utils"
 
 
-export const isCanvasSupport = () => {
+export const canvasSupport = () => {
   const canvas = document.createElement('canvas');
   if (!canvas) {
     return false;
@@ -82,7 +84,8 @@ export const getOrientation = base64 => {
 };
 
 
-export const fixOrientation = (canvas, ctx, orientation) => {
+export const fixOrientation = (canvas, orientation) => {
+  const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
   if (orientation > 4) {
@@ -98,9 +101,42 @@ export const fixOrientation = (canvas, ctx, orientation) => {
     '7': [0, -1, -1, 0, h, w],
     '8': [0, -1, 1, 0, 0, w]
   }
-  const p = [1, 0, 0, 1, 0, 0]
-  ctx.transform.apply(ctx, map[orientation] || p)
+  const args = map[orientation] || [1, 0, 0, 1, 0, 0]
+  ctx.transform.apply(ctx, args)
 };
+
+export const getPreviewInfo = (file, fix = true, quality) => {
+  if (!canvasSupport()) {
+    const msg = 'Canvas is not supported on this device.'
+    return Promise.reject(msg)
+  }
+  const getBase64 = (image, base64) => {
+    if (!fix) {
+      return base64
+    }
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    fixOrientation(canvas, getOrientation(base64))
+    ctx.drawImage(image, 0, 0)
+    return canvas.toDataURL(file.type, quality)
+  }
+  const result = (image, base64) => Object.freeze(plainObject({
+    name: file.name,
+    type: file.type,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+    getBase64: () => getBase64(image, base64),
+    getBlob: () => base64ToBlob(getBase64(image, base64))
+  }))
+  const load = base64 => {
+    return loadImage(base64).then(image => {
+      return Promise.resolve(result(image, base64))
+    }).catch(e => Promise.reject(e))
+  }
+  return readFile(file).then(load).catch(e => Promise.reject(e))
+}
 
 const compressorOptions = {
   width: '100%', // auto or percentage or number
@@ -225,33 +261,71 @@ const getBaseOptions = (ops, fsi) => {
   })
 }
 
-const drawImage = (canvas, ctx, image, w0, h0) => {
-  ctx.drawImage(
-    image,
-    0,
-    0,
-    image.naturalWidth,
-    image.naturalHeight,
-    0,
-    0,
-    canvas.width,
-    canvas.height
-  );
+const drawImage = (canvas, image, sw, sh) => {
+  const {width, height} = canvas
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, width, height)
+  ctx.drawImage(image, 0, 0, sw, sh, 0, 0, width, height)
 }
 
-const output = (blob, resultType) => {
+const qco = (canvas, mime, size, error, min, max) => {
   return new Promise((resolve, reject) => {
-    if (getType(blob) !== 'Blob') {
-      return reject(`${blob} is not instanceof Blob`)
+    const fn = (canvas, mime, size, error, min, max) => {
+      const q = size ? min + (max - min) / 2 : max;
+      const cycle = p => p[0] === min && p[1] === max
+      const hit = bs => Math.abs(bs - size) <= error
+      const lt = threshold => Math.abs(max - min) <= threshold
+      const cb = blob => {
+        const bs = blob.size
+        const p = bs > size ? [min, q] : [q, max]
+        if (!size || hit(bs) || cycle(p) || lt(0.01)) {
+          return resolve(blob)
+        }
+        fn.apply(null, [canvas, mime, ops].concat(p))
+      }
+      const jpg = /jpe?g$/i.test(mime)
+      const args = [cb, mime].concat(jpg ? q : [])
+      try {
+        canvas.toBlob.apply(canvas, args)
+      } catch (e) {
+        reject(e)
+      }
     }
-    // blob.name = file.name
-    blob.lastModified = Date.now()
-    blob.lastModifiedDate = new Date()
-    if (resultType === 'base64') {
-      blobToBase64(blob, resolve, reject);
-    } else {
-      resolve(blob)
+    fn(canvas, mime, size, error, min, max)
+  })
+}
+
+const sco = (canvas, img, mime, ops, min, max) => {
+  return new Promise((resolve, reject) => {
+    const {size, error, minQuality} = ops
+    const fn = (canvas, img, mime, ops, min, max) => {
+      const w = size ? min + (max - min) / 2 : max;
+      const cycle = p => p[0] === min && p[1] === max
+      const hit = bs => Math.abs(bs - size) <= error
+      const lt = threshold => Math.abs(max - min) <= threshold
+      const cb = blob => {
+        const bs = blob.size
+        const p = bs > size ? [min, w] : [w, max]
+        if (!size || hit(bs) || cycle(p) || lt(0)) {
+          return resolve(blob)
+        }
+        fn.apply(null, [canvas, img, mime, ops].concat(p))
+      }
+      const jpg = /jpe?g$/i.test(mime)
+      const args = [cb, mime].concat(jpg ? minQuality : [])
+      try {
+        canvas.toBlob.apply(canvas, args)
+      } catch (e) {
+        reject(e)
+      }
     }
+    fn(canvas, img, mime, ops, min, max)
+  })
+}
+
+const co = (file, ops = {}) => {
+  return new Promise((resolve, reject) => {
+
   })
 }
 
@@ -272,49 +346,80 @@ const qCompressor = (next, canvas, mime, size, error, quality, min = 0, max = 1)
   console.log('args: ', args)
   canvas.toBlob.apply(canvas, args)
 }
-let i = 0
+
+const qc = (canvas, fileType, ops) => {
+  const {size, error, quality, min, max} = ops
+  const qt = 0.01
+  const st = 0
+  const jpg = /jpe?g$/i.test(fileType)
+  const compressEnd = (s, threshold) => {
+    return Math.abs(s - size) <= error || max - min <= threshold
+  }
+  const exec = (threshold, next, body) => blob => {
+    if (!size || compressEnd(blob.size, threshold)) {
+      return next(blob)
+    }
+    return body(threshold, next, blob)
+  }
+  const qCompressor = () => {
+
+  }
+  return new Promise((resolve, reject) => {
+
+  })
+}
+const sc = (canvas, mime, image, width, height, lock, fix, orientation, quality) => {
+  console.log('sc: ', canvas, mime, image, width, height, lock, fix, orientation, quality)
+  return new Promise((resolve, reject) => {
+    canvas.width = width
+    canvas.height = height
+    drawImage(canvas, image, width, height, lock)
+    fix && fixOrientation(canvas, orientation)
+    try {
+      canvas.toBlob(resolve, mime, quality)
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+
 const sCompressor = (next, blob, img, canvas, ctx, mime, ops, min, max) => {
   console.log('sCompressor min: ', min)
   console.log('sCompressor max: ', max)
   const ratio = img.naturalWidth / img.naturalHeight
   const point = Math.floor(min + (max - min) / 2)
-  const delta = max - min
-  // if (ratio < 0) {
-  //   canvas.height = point;
-  //   canvas.width = Math.floor(point * ratio);
-  // } else {
-  //   canvas.width = point;
-  //   canvas.height = Math.floor(point / ratio);
-  // }
   canvas.width = point
   canvas.height = Math.floor(point / ratio)
+  console.log('sCompressor orientation: ', ops.orientation)
   console.log('sCompressor ratio: ', ratio)
   console.log('sCompressor canvas.width: ', canvas.width)
   console.log('sCompressor canvas.height: ', canvas.height)
   console.log('sCompressor canvas.r: ', canvas.width / canvas.height)
-  drawImage(canvas, ctx, img)
-  if(ops.fixOrientation) {
-    fixOrientation(canvas, ctx, ops.orientation)
-  }
+  drawImage(canvas, img)
+  // if(ops.fixOrientation) {
+  //   fixOrientation(canvas, ops.orientation)
+  // }
+  console.log('sCompressor canvas.width2: ', canvas.width)
+  console.log('sCompressor canvas.height2: ', canvas.height)
   const handler = blob => {
-    // if(++i === 20) {
-    //   return next(blob)
-    // }
     console.log('sCompressor blob.s: ', bytesToSize(blob.size))
-    if(Math.abs(blob.size - ops.size) <= ops.error || min === max) {
+    if (Math.abs(blob.size - ops.size) <= ops.error || min === max) {
       return next(blob)
     }
     const p = blob.size > ops.size ? [min, point] : [point, max]
     console.log('sCompressor p: ', p)
-    if(p[0] === min && p[1] === max) {
+    if (p[0] === min && p[1] === max) {
       return next(blob)
     }
     const param = [next, blob, img, canvas, ctx, mime, ops].concat(p)
+    console.log('sCompressor handler param: ', param)
     sCompressor.apply(null, param)
   }
   console.log('sCompressor sQuality: ', ops.sQuality)
   console.log('sCompressor point: ', point)
-  canvas.toBlob(handler, mime, ops.sQuality)
+  const param = [handler, mime, ops.sQuality]
+  console.log('sCompressor param: ', param)
+  canvas.toBlob.apply(canvas, param)
 }
 
 
@@ -346,15 +451,16 @@ export const compressor = (file, options = {}) => {
         canvas.width = ops.width;
         canvas.height = ops.height;
         if (ops.fixOrientation) {
-          fixOrientation(canvas, ctx, orientation)
+          fixOrientation(canvas, orientation)
         }
-        drawImage(canvas, ctx, image)
+        // drawImage(canvas, image)
+        ctx.drawImage(image, 0, 0, w0, h0)
         const scOps = plainObject({}, ops, {
           orientation,
           sQuality: ops.minQuality
         })
         const sNext = blob => {
-          if(getType(blob) !== 'Blob') {
+          if (getType(blob) !== 'Blob') {
             return reject(blob)
           }
           // if(Math.abs(blob.size - ops.size) <= ops.error ) {
@@ -363,10 +469,10 @@ export const compressor = (file, options = {}) => {
           return resolve(blob)
         }
         const next = blob => {
-          if(getType(blob) !== 'Blob') {
+          if (getType(blob) !== 'Blob') {
             return reject(blob)
           }
-          if(Math.abs(blob.size - ops.size) <= ops.error || ops.fixedSize) {
+          if (Math.abs(blob.size - ops.size) <= ops.error || ops.fixedSize) {
             return resolve(blob)
           }
           sCompressor(
@@ -381,16 +487,16 @@ export const compressor = (file, options = {}) => {
             ops.width
           )
         }
-        qCompressor(
-          next,
-          canvas,
-          fileType,
-          ops.size,
-          ops.error,
-          ops.quality,
-          ops.minQuality,
-          1
-        )
+        // qCompressor(
+        //   next,
+        //   canvas,
+        //   fileType,
+        //   ops.size,
+        //   ops.error,
+        //   ops.quality,
+        //   ops.minQuality,
+        //   1
+        // )
         console.log('baseOps: ', baseOps)
         console.log('sizeOps: ', sizeOps)
         console.log('ops: ', ops)

@@ -24,8 +24,8 @@
         </label>
       </div>
     </div>
-    <div ref="op" class="box" v-html="op" style="margin-top: 10px;">
-
+    <div ref="op" class="box" style="margin-top: 10px;">
+      <img :src="op" alt="" style="width: 100%;display: block;">
     </div>
   </div>
 </template>
@@ -61,7 +61,8 @@
     sizeToBytes,
     bytesToSize,
   } from "./utils"
-  import {compressor, loadImage, getOrientation} from "./imageTool";
+  import {compressor, loadImage, getOrientation, getPreviewInfo} from "./imageTool";
+  import {newImage} from "./image";
 
   export default {
     name: 'Uploader',
@@ -187,26 +188,10 @@
           const file = fileList[0]
           console.log('file.size: ', bytesToSize(fileList[0].size))
           console.log('file.o: ', getOrientation(file.base64()))
-          compressor(fileList[0].raw, {
-            width: 'auto',
-            size: '500k',
-            error: '30k',
-            minQuality: '70',
-          }).then(blob => {
-            console.log('compressor output: ', blob)
-            console.log('compressor output size: ', bytesToSize(blob.size))
-            readFile(blob).then(base64 => {
-              loadImage(base64).then(image => {
-                console.log('compressor output image.o: ', getOrientation(base64))
-                console.log('compressor output image.w: ', image.naturalWidth)
-                console.log('compressor output image.h: ', image.naturalHeight)
-                console.log('compressor output image.r: ', image.naturalWidth / image.naturalHeight)
-                image.style.width = '100%'
-                this.op = image.outerHTML
-              })
-            })
-          }).catch(e => {
-            console.log('compressor output e: ', e)
+          getPreviewInfo(file.raw).then(image => {
+            console.log(image)
+            console.log('blob: ', image.getBlob())
+            this.op = image.getBase64()
           })
         }
       },
