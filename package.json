@@ -9,7 +9,7 @@
     "serve-p": "vue-cli-service serve --mode production",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
-    "format": "prettier --write src/*.js",
+    "format": "prettier --check --write src/**/**/**/**/*.js src/**/**/**/**/*.vue",
     "pre-commit": "npm run format && git add -u"
   },
   "dependencies": {
@@ -36,6 +36,7 @@
     "less": "^3.10.3",
     "less-loader": "^5.0.0",
     "node-sass": "^4.12.0",
+    "prettier": "^1.19.1",
     "sass-loader": "^7.1.0",
     "url-loader": "^2.2.0",
     "vue-template-compiler": "^2.6.10"
