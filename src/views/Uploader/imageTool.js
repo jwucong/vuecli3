@@ -86,9 +86,7 @@ export const getOrientation = base64 => {
 
 
 export const fixOrientation = (canvas, orientation) => {
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
+  const {width: w, height: h} = canvas
   if (orientation > 4) {
     canvas.width = h;
     canvas.height = w;
@@ -103,26 +101,15 @@ export const fixOrientation = (canvas, orientation) => {
     '8': [0, -1, 1, 0, 0, w]
   }
   const args = map[orientation] || [1, 0, 0, 1, 0, 0]
+  const ctx = canvas.getContext('2d');
   ctx.transform.apply(ctx, args)
 };
 
-export const getCutOrigin = (image, cw, ch, orientation) => {
-  console.group('getCutOrigin')
+export const getClipOrigin = (image, cw, ch, orientation) => {
   const {naturalWidth: w0, naturalHeight: h0} = image
-  console.log('orientation: %o', orientation)
-  console.log('w0: %o, h0: %o', w0, h0)
-  console.log('cw: %o, ch: %o', cw, ch)
-  const setOrigin = (x = 0, y = 0) => {
-    const o = {x, y}
-    console.log('origin:', o)
-    console.groupEnd()
-    return o
-  }
   const abs = Math.abs
-  const dir = parseInt(orientation, 10)
-  console.log('dir: ', dir)
-
-  switch (dir) {
+  const setOrigin = (x = 0, y = 0) => ({x, y})
+  switch (parseInt(orientation, 10)) {
     case 2: return setOrigin(abs(w0 - cw), 0)
     case 3: return setOrigin(abs(w0 - cw), abs(h0 -ch))
     case 4: return setOrigin(0, abs(h0 -ch))
@@ -132,6 +119,15 @@ export const getCutOrigin = (image, cw, ch, orientation) => {
     case 8: return setOrigin(abs(w0 - ch), 0)
     default: return setOrigin(0, 0)
   }
+}
+
+const drawImage = (canvas, image, sw, sh, orientation) => {
+  const {width, height} = canvas
+  const {x, y} = getClipOrigin(image, sw, sh, orientation)
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, width, height)
+  ctx.drawImage(image, 0, 0)
+  // ctx.drawImage(image, x, y, width, height, 0, 0, width, height)
 }
 
 export const getPreviewInfo = (file, fix = true, quality) => {
@@ -292,20 +288,7 @@ const getBaseOptions = (ops, fsi) => {
   })
 }
 
-const drawImage = (canvas, image, sw, sh, orientation) => {
-  // const {naturalWidth: w0, naturalHeight: h0} = image
 
-  let {width, height} = canvas
-  const o = getCutOrigin(image, width, height, orientation)
-  const {x, y} = o
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, width, height)
-  // ctx.drawImage(image, 0, 0, w, h, 0, 0, width, height)
-  console.log('drawImage sw: %o, sh: %o', sw, sh)
-  console.log('drawImage width: %o, height: %o', width, height)
-  console.log('drawImage o.x: %o, o.y: %o', o.x, o.y)
-  ctx.drawImage(image, x, y, sw, sh, 0, 0, sw, sh)
-}
 
 const genC = (...args) => {
   return new Promise((resolve, reject) => {
@@ -487,190 +470,8 @@ const co = (file, options = {}) => {
   return readFile(file).then(load, exit).then(next, exit)
 }
 
-const qCompressor = (next, canvas, mime, size, error, quality, min = 0, max = 1) => {
-  const jpg = /jpe?g$/i.test(mime)
-  const q = size ? min + (max - min) / 2 : quality;
-  const threshold = 0.01;
-  const delta = max - min;
-  const handler = blob => {
-    if (!size || Math.abs(blob.size - size) <= error || delta <= threshold) {
-      return next(blob)
-    }
-    const p = blob.size > size ? [min, q] : [q, max]
-    const param = [next, canvas, mime, size, error, quality].concat(p)
-    qCompressor.apply(null, param)
-  }
-  const args = [handler, mime].concat(jpg ? q : [])
-  console.log('args: ', args)
-  canvas.toBlob.apply(canvas, args)
-}
-
-const qc = (canvas, fileType, ops) => {
-  const {size, error, quality, min, max} = ops
-  const qt = 0.01
-  const st = 0
-  const jpg = /jpe?g$/i.test(fileType)
-  const compressEnd = (s, threshold) => {
-    return Math.abs(s - size) <= error || max - min <= threshold
-  }
-  const exec = (threshold, next, body) => blob => {
-    if (!size || compressEnd(blob.size, threshold)) {
-      return next(blob)
-    }
-    return body(threshold, next, blob)
-  }
-  const qCompressor = () => {
-
-  }
-  return new Promise((resolve, reject) => {
-
-  })
-}
-const sc = (canvas, mime, image, width, height, lock, fix, orientation, quality) => {
-  console.log('sc: ', canvas, mime, image, width, height, lock, fix, orientation, quality)
-  return new Promise((resolve, reject) => {
-    canvas.width = width
-    canvas.height = height
-    drawImage(canvas, image, width, height, lock)
-    fix && fixOrientation(canvas, orientation)
-    try {
-      canvas.toBlob(resolve, mime, quality)
-    } catch (e) {
-      reject(e)
-    }
-  })
-}
-
-const sCompressor = (next, blob, img, canvas, ctx, mime, ops, min, max) => {
-  console.log('sCompressor min: ', min)
-  console.log('sCompressor max: ', max)
-  const ratio = img.naturalWidth / img.naturalHeight
-  const point = Math.floor(min + (max - min) / 2)
-  canvas.width = point
-  canvas.height = Math.floor(point / ratio)
-  console.log('sCompressor orientation: ', ops.orientation)
-  console.log('sCompressor ratio: ', ratio)
-  console.log('sCompressor canvas.width: ', canvas.width)
-  console.log('sCompressor canvas.height: ', canvas.height)
-  console.log('sCompressor canvas.r: ', canvas.width / canvas.height)
-  drawImage(canvas, img)
-  // if(ops.fixOrientation) {
-  //   fixOrientation(canvas, ops.orientation)
-  // }
-  console.log('sCompressor canvas.width2: ', canvas.width)
-  console.log('sCompressor canvas.height2: ', canvas.height)
-  const handler = blob => {
-    console.log('sCompressor blob.s: ', bytesToSize(blob.size))
-    if (Math.abs(blob.size - ops.size) <= ops.error || min === max) {
-      return next(blob)
-    }
-    const p = blob.size > ops.size ? [min, point] : [point, max]
-    console.log('sCompressor p: ', p)
-    if (p[0] === min && p[1] === max) {
-      return next(blob)
-    }
-    const param = [next, blob, img, canvas, ctx, mime, ops].concat(p)
-    console.log('sCompressor handler param: ', param)
-    sCompressor.apply(null, param)
-  }
-  console.log('sCompressor sQuality: ', ops.sQuality)
-  console.log('sCompressor point: ', point)
-  const param = [handler, mime, ops.sQuality]
-  console.log('sCompressor param: ', param)
-  canvas.toBlob.apply(canvas, param)
-}
-
 
 export const compressor = (file, options = {}) => {
   console.log('compressor: ', file)
   return co(file, options);
-  return new Promise((resolve, reject) => {
-    const type = getType(file).toLowerCase()
-    if (['file', 'blob'].indexOf(type) === -1) {
-      return reject(new Error('Not a file'))
-    }
-    const fileType = file.type;
-    console.log('fileType: ', fileType)
-    const png = /png$/i.test(fileType);
-    const jpg = /jpe?g$/i.test(fileType);
-    console.log('png: ', png)
-    console.log('jpg: ', jpg)
-    if (!(jpg || png)) {
-      return reject(new Error('Only JPG and PNG files are supported'))
-    }
-    readFile(file).then(base64 => {
-      loadImage(base64).then(image => {
-        const w0 = image.naturalWidth
-        const h0 = image.naturalHeight
-        const baseOps = getBaseOptions(options, file.size)
-        const sizeOps = getSize(options, w0, h0, baseOps.lockAspect)
-        const orientation = getOrientation(base64)
-        const ops = plainObject(baseOps, sizeOps)
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = ops.width;
-        canvas.height = ops.height;
-        if (ops.fixOrientation) {
-          fixOrientation(canvas, orientation)
-        }
-        // drawImage(canvas, image)
-        ctx.drawImage(image, 0, 0, w0, h0)
-        const scOps = plainObject({}, ops, {
-          orientation,
-          sQuality: ops.minQuality
-        })
-        const sNext = blob => {
-          if (getType(blob) !== 'Blob') {
-            return reject(blob)
-          }
-          // if(Math.abs(blob.size - ops.size) <= ops.error ) {
-          //   return resolve(blob)
-          // }
-          return resolve(blob)
-        }
-        const next = blob => {
-          if (getType(blob) !== 'Blob') {
-            return reject(blob)
-          }
-          if (Math.abs(blob.size - ops.size) <= ops.error || ops.fixedSize) {
-            return resolve(blob)
-          }
-          sCompressor(
-            sNext,
-            blob,
-            image,
-            canvas,
-            ctx,
-            fileType,
-            scOps,
-            ops.minWidth,
-            ops.width
-          )
-        }
-        // qCompressor(
-        //   next,
-        //   canvas,
-        //   fileType,
-        //   ops.size,
-        //   ops.error,
-        //   ops.quality,
-        //   ops.minQuality,
-        //   1
-        // )
-        console.log('baseOps: ', baseOps)
-        console.log('sizeOps: ', sizeOps)
-        console.log('ops: ', ops)
-        console.log('w0: ', w0)
-        console.log('h0: ', h0)
-        console.log('fileSize: ', file.size)
-      }).catch((e) => {
-        console.log(e)
-        reject(new Error('Load image error'))
-      })
-    }).catch(() => {
-      reject(new Error('File read failed'))
-    })
-  })
-
-
 }

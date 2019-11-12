@@ -8,7 +8,9 @@
     "serve-t": "vue-cli-service serve --mode test",
     "serve-p": "vue-cli-service serve --mode production",
     "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint"
+    "lint": "vue-cli-service lint",
+    "format": "prettier --write src/*.js",
+    "pre-commit": "npm run format && git add -u"
   },
   "dependencies": {
     "@ungap/url-search-params": "^0.1.2",
@@ -30,6 +32,7 @@
     "eslint": "^5.16.0",
     "eslint-plugin-vue": "^5.0.0",
     "file-loader": "^4.2.0",
+    "husky": "^3.0.9",
     "less": "^3.10.3",
     "less-loader": "^5.0.0",
     "node-sass": "^4.12.0",

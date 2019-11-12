@@ -193,8 +193,9 @@
           //   this.op = image.getBase64()
           // })
           compressor(file.raw, {
-            size: '300k',
-            minQuality: 'medium'
+            width: '30%',
+            // size: '300k',
+            // minQuality: '92'
           }).then(blob => {
             console.group('compressor')
             console.log('compressor blob: ', blob)
