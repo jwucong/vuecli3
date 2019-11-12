@@ -53,13 +53,16 @@ export const sizeToBytes = (size, base = 1000) => {
 
 
 export const parseBase64 = base64 => {
+  // console.log(base64)
   const reg = /data:([^;]+);base64,(.+)?/i
   const match = reg.exec(base64)
+  // console.log(match)
   const result = {type: '', data: ''}
   if(match) {
     result.type = match[1] || ''
     result.data = match[2] || ''
   }
+  // console.log(result)
   return result
 }
 

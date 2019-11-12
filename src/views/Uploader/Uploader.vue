@@ -184,14 +184,28 @@
       updateFileList(fileList) {
         this.$emit('input', fileList)
         this.updateThumbnailList(fileList)
-        if(fileList[0]) {
-          const file = fileList[0]
+        const file = fileList[0]
+        if(file) {
           console.log('file.size: ', bytesToSize(fileList[0].size))
           console.log('file.o: ', getOrientation(file.base64()))
-          getPreviewInfo(file.raw).then(image => {
-            console.log(image)
-            console.log('blob: ', image.getBlob())
-            this.op = image.getBase64()
+          // getPreviewInfo(file.raw).then(image => {
+          //   console.log('getPreviewInfo: ', image)
+          //   this.op = image.getBase64()
+          // })
+          compressor(file.raw, {
+            size: '300k',
+            minQuality: 'medium'
+          }).then(blob => {
+            console.group('compressor')
+            console.log('compressor blob: ', blob)
+            console.log('compressor blob.size: ', bytesToSize(blob.size))
+            readFile(blob).then(url => {
+              this.op = url
+              loadImage(url).then(image => {
+                console.log('compressor image.width: ', image.naturalWidth)
+                console.log('compressor image.height: ', image.naturalHeight)
+              })
+            })
           })
         }
       },
